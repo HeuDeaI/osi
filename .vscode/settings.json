@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "test": "ruby",
+    "map": "cpp",
+    "vector": "cpp",
+    "ostream": "cpp"
+  }
+}
