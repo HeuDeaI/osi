@@ -15,53 +15,63 @@ type Client struct {
 	id int
 }
 
-func (barber *Barber) doHaircut(client Client, queueOfClients chan Client, wg *sync.WaitGroup) {
+type QueueOfClients struct {
+	clients []Client
+	mu      sync.Mutex
+}
+
+func (barber *Barber) doHaircut(client Client, wg *sync.WaitGroup) {
+	defer wg.Done()
 	fmt.Printf("Barber started cutting client №%d\n", client.id)
 	time.Sleep(2 * time.Second)
 	fmt.Printf("Barber finished cutting client №%d\n", client.id)
-	barber.lookForClients(queueOfClients, wg)
 }
 
-func (barber *Barber) lookForClients(queueOfClients chan Client, wg *sync.WaitGroup) {
-	select {
-	case client := <-queueOfClients:
-		barber.doHaircut(client, queueOfClients, wg)
-	default:
-		fmt.Printf("Barber falls asleep\n")
-		barber.isSleep = true
-	}
-}
+func (barber *Barber) lookForClients(queueOfClients *QueueOfClients, wg *sync.WaitGroup) {
+	for {
+		queueOfClients.mu.Lock()
+		if len(queueOfClients.clients) > 0 {
+			client := queueOfClients.clients[0]
+			queueOfClients.clients = queueOfClients.clients[1:]
+			queueOfClients.mu.Unlock()
 
-func (client *Client) arriveToBarbershop(barber *Barber, queueOfClients chan Client, wg *sync.WaitGroup) {
-	defer wg.Done()
-	fmt.Printf("Client №%d arrives at the barbershop\n", client.id)
-	if barber.isSleep {
-		fmt.Printf("Barber wakes up\n")
-		barber.isSleep = false
-		barber.doHaircut(*client, queueOfClients, wg)
-	} else {
-		select {
-		case queueOfClients <- *client:
-			fmt.Printf("Client №%d joins the queue\n", client.id)
-		default:
-			fmt.Printf("Client №%d leaves the barbershop because all chairs are taken\n", client.id)
+			barber.doHaircut(client, wg)
+			barber.isSleep = false
+		} else {
+			fmt.Printf("Barber falls asleep\n")
+			barber.isSleep = true
+			queueOfClients.mu.Unlock()
 		}
 	}
 }
 
+func (client *Client) arriveToBarbershop(queueOfClients *QueueOfClients) {
+	queueOfClients.mu.Lock()
+	fmt.Printf("Client №%d arrives at the barbershop\n", client.id)
+	if len(queueOfClients.clients) < 3 {
+		queueOfClients.clients = append(queueOfClients.clients, *client)
+		fmt.Printf("Client №%d joins the queue\n", client.id)
+	} else {
+		fmt.Printf("Client №%d leaves the barbershop because all chairs are taken\n", client.id)
+	}
+	queueOfClients.mu.Unlock()
+}
+
 func main() {
 	const chairs = 3
-	queueOfClients := make(chan Client, chairs)
+	queueOfClients := QueueOfClients{clients: make([]Client, 0, chairs)}
 	barber := Barber{isSleep: true}
 	var wg sync.WaitGroup
+
+	go barber.lookForClients(&queueOfClients, &wg)
 
 	for i := 0; i < 10; i++ {
 		client := Client{id: i}
 		wg.Add(1)
-		go client.arriveToBarbershop(&barber, queueOfClients, &wg)
-		time.Sleep(time.Duration(rand.Intn(2000)) * time.Millisecond)
+		go client.arriveToBarbershop(&queueOfClients)
+		time.Sleep(time.Duration(rand.Intn(5000)) * time.Millisecond)
 	}
 
 	wg.Wait()
-	fmt.Println("All clients have been served or left, and the barbershop is now closed.\n")
+	fmt.Println("All clients have been served or left, and the barbershop is now closed.")
 }

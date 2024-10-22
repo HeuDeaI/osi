@@ -3,7 +3,7 @@
 #include <unistd.h>
 
 int main() {
-    std::vector<int> tree = {0, 1, 1, 1, 3, 3, 5};
+    std::vector<int> tree = {0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 10, 10, 10, 10};
     std::cout << "Root process PID: " << getpid() << std::endl;
     int u = 0;
     
