@@ -1,6 +1,8 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+)
 
 const (
 	MEMORY_SIZE    = 512
@@ -8,73 +10,80 @@ const (
 	COUNT_OF_PAGES = MEMORY_SIZE / PAGE_SIZE
 )
 
-type Page struct {
-	data      [PAGE_SIZE]rune
-	freeSpace int
-}
-
 type Pointer struct {
-	pageNumber   int
-	dataLocation int
+	DataOffset int
+	Size       int
 }
 
 type Memory struct {
-	pages [COUNT_OF_PAGES]*Page
+	Data      [MEMORY_SIZE]rune
+	FreeSpace *Pointer
+	FreeList  []*Pointer
 }
 
-func setMemory() *Memory {
-	memory := &Memory{}
-	for i := 0; i < COUNT_OF_PAGES; i++ {
-		memory.pages[i] = &Page{freeSpace: PAGE_SIZE}
+func SetMemory() *Memory {
+	return &Memory{
+		FreeSpace: &Pointer{DataOffset: 0},
+		FreeList:  []*Pointer{},
 	}
-	return memory
 }
 
 func (memory *Memory) allocate(size int) *Pointer {
-	for i := 0; i < COUNT_OF_PAGES; i++ {
-		if freeSpace := &memory.pages[i].freeSpace; *freeSpace > size {
-			ptr := &Pointer{pageNumber: i, dataLocation: PAGE_SIZE - *freeSpace}
-			*freeSpace -= size
-			return ptr
+	for i, block := range memory.FreeList {
+		if block.Size >= size {
+			memory.FreeList = append(memory.FreeList[:i], memory.FreeList[i+1:]...)
+			return block
 		}
 	}
-	return nil
+
+	if (memory.FreeSpace.DataOffset / PAGE_SIZE) != ((memory.FreeSpace.DataOffset + size) / PAGE_SIZE) {
+		memory.FreeSpace.DataOffset = (memory.FreeSpace.DataOffset/PAGE_SIZE + 1) * PAGE_SIZE
+	}
+
+	ptr := &Pointer{DataOffset: memory.FreeSpace.DataOffset, Size: size}
+	memory.FreeSpace.DataOffset += size
+	return ptr
 }
 
-func (memory *Memory) free(size int) {
+func (memory *Memory) free(ptr *Pointer) {
+	for i := ptr.DataOffset; i < ptr.DataOffset+ptr.Size; i++ {
+		memory.Data[i] = 0
+	}
+
+	memory.FreeList = append(memory.FreeList, ptr)
 }
 
 func (memory *Memory) write(ptr *Pointer, data []rune) {
-	pageSpace := memory.pages[ptr.pageNumber].data[ptr.dataLocation:]
-	copy(pageSpace, data)
+	copy(memory.Data[ptr.DataOffset:ptr.DataOffset+ptr.Size], data)
 }
 
 func (memory *Memory) read(ptr *Pointer) []rune {
-	page := memory.pages[ptr.pageNumber]
-	startLineIndex := ptr.dataLocation
-	endLineIndex := 0
-	for i := ptr.dataLocation; i < PAGE_SIZE; i++ {
-		if page.data[i] == 0 {
-			endLineIndex = i
-			break
-		}
-	}
-	return page.data[startLineIndex:endLineIndex]
+	startLineIndex := ptr.DataOffset
+	endLineIndex := startLineIndex + ptr.Size
+	return memory.Data[startLineIndex:endLineIndex]
 }
 
 func (memory *Memory) viewMemory() {
-	for i := 0; i < COUNT_OF_PAGES; i++ {
-		fmt.Printf("Page №%v: %v\n", i, memory.pages[i])
+	for page := 0; page < COUNT_OF_PAGES; page++ {
+		startIndex := page * PAGE_SIZE
+		endIndex := startIndex + PAGE_SIZE
+		if endIndex > MEMORY_SIZE {
+			endIndex = MEMORY_SIZE
+		}
+
+		pageData := memory.Data[startIndex:endIndex]
+		fmt.Printf("Page №%d: &{%v}\n", page, pageData)
 	}
 }
 
-func (memory *Memory) InsertData(data string) {
-	ptr := memory.allocate(len(data) + 1)
+func (memory *Memory) InsertData(data string) *Pointer {
+	ptr := memory.allocate(len(data))
 	memory.write(ptr, []rune(data))
+	return ptr
 }
 
 func main() {
-	memory := setMemory()
+	memory := SetMemory()
 
 	dataSet := []string{
 		"hello", "world", "memory", "allocation", "test", "data", "set",
@@ -85,12 +94,21 @@ func main() {
 		"identify", "any", "potential", "issues", "with", "our", "current",
 		"memory", "layout", "and", "free", "space", "tracking", "mechanism",
 		"keep", "adding", "more", "strings", "to", "fill", "the", "pages",
-		"and", "observe", "how", "allocation", "behaves", "when", "memory",
-		"is", "almost", "full", "or", "completely", "filled",
-	}
-	for _, data := range dataSet {
-		memory.InsertData(data)
+		"and observe how allocation behaves when memory is almost full or completely filled",
 	}
 
+	var pointers []*Pointer
+	for _, data := range dataSet {
+		ptr := memory.InsertData(data)
+		pointers = append(pointers, ptr)
+	}
+	memory.viewMemory()
+
+	memory.free(pointers[1])
+	memory.free(pointers[3])
+
+	memory.InsertData("reuse")
+	memory.InsertData("big reuse")
+	fmt.Println()
 	memory.viewMemory()
 }
