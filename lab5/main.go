@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -21,20 +23,25 @@ type File struct {
 type Directory struct {
 	Name     string
 	Children map[string]interface{}
+	Parent   *Directory
 }
 
 type FileSystem struct {
 	Root       *Directory
 	Blocks     [NumBlocks]Block
 	UsedBlocks []bool
+	CurrDir    *Directory
 }
 
 func NewFileSystem() *FileSystem {
+	root := &Directory{
+		Name:     "/",
+		Children: make(map[string]interface{}),
+		Parent:   nil,
+	}
 	return &FileSystem{
-		Root: &Directory{
-			Name:     "/",
-			Children: make(map[string]interface{}),
-		},
+		Root:       root,
+		CurrDir:    root,
 		UsedBlocks: make([]bool, NumBlocks),
 	}
 }
@@ -49,18 +56,16 @@ func (fs *FileSystem) AllocateBlock() int {
 	return -1
 }
 
-func (fs *FileSystem) CreateFile(path string, name string) {
-	dir := fs.findDirectory(path)
-	dir.Children[name] = &File{Name: name, BlockNums: []int{}, Size: 0}
+func (fs *FileSystem) CreateFile(name string) {
+	fs.CurrDir.Children[name] = &File{Name: name, BlockNums: []int{}, Size: 0}
 }
 
-func (fs *FileSystem) CreateDirectory(path string, name string) {
-	dir := fs.findDirectory(path)
-	dir.Children[name] = &Directory{Name: name, Children: make(map[string]interface{})}
+func (fs *FileSystem) CreateDirectory(name string) {
+	fs.CurrDir.Children[name] = &Directory{Name: name, Children: make(map[string]interface{}), Parent: fs.CurrDir}
 }
 
-func (fs *FileSystem) WriteToFile(path string, data []byte) {
-	file := fs.findFile(path)
+func (fs *FileSystem) WriteToFile(name string, data []byte) {
+	file := fs.findFile(name)
 	bytesWritten := 0
 	for bytesWritten < len(data) {
 		blockNum := fs.AllocateBlock()
@@ -71,8 +76,8 @@ func (fs *FileSystem) WriteToFile(path string, data []byte) {
 	}
 }
 
-func (fs *FileSystem) ReadFromFile(path string) []byte {
-	file := fs.findFile(path)
+func (fs *FileSystem) ReadFromFile(name string) []byte {
+	file := fs.findFile(name)
 	data := []byte{}
 	for _, blockNum := range file.BlockNums {
 		data = append(data, fs.Blocks[blockNum][:]...)
@@ -80,106 +85,119 @@ func (fs *FileSystem) ReadFromFile(path string) []byte {
 	return data
 }
 
-func (fs *FileSystem) findDirectory(path string) *Directory {
+func (fs *FileSystem) ChangeDirectory(path string) {
+	if path == "/" {
+		fs.CurrDir = fs.Root
+		return
+	}
 	segments := strings.Split(path, "/")
-	curr := fs.Root
+	curr := fs.CurrDir
 	for _, seg := range segments {
-		if seg == "" {
+		if seg == "" || seg == "." {
 			continue
 		}
-		curr = curr.Children[seg].(*Directory)
+		if seg == ".." {
+			curr = curr.Parent
+			continue
+		}
+		child := curr.Children[seg]
+		if dir, ok := child.(*Directory); ok {
+			curr = dir
+		}
 	}
-	return curr
+	fs.CurrDir = curr
 }
 
-func (fs *FileSystem) findFile(path string) *File {
-	dirPath, fileName := splitPath(path)
-	dir := fs.findDirectory(dirPath)
-	return dir.Children[fileName].(*File)
-}
-
-func splitPath(path string) (dirPath, fileName string) {
-	lastSlash := strings.LastIndex(path, "/")
-	if lastSlash == -1 {
-		return "/", path
+func (fs *FileSystem) ListDirectory() {
+	for name, child := range fs.CurrDir.Children {
+		switch child.(type) {
+		case *File:
+			fmt.Println(name)
+		case *Directory:
+			fmt.Println(name + "/")
+		}
 	}
-	return path[:lastSlash], path[lastSlash+1:]
 }
 
-func (fs *FileSystem) CopyFile(srcPath, destPath string) {
-	srcFile := fs.findFile(srcPath)
-	destDirPath, destFileName := splitPath(destPath)
-	destDir := fs.findDirectory(destDirPath)
+func (fs *FileSystem) DeleteFile(name string) {
+	file := fs.findFile(name)
+	for _, blockNum := range file.BlockNums {
+		fs.UsedBlocks[blockNum] = false
+	}
+	delete(fs.CurrDir.Children, name)
+}
 
-	newFile := &File{Name: destFileName, BlockNums: []int{}, Size: srcFile.Size}
+func (fs *FileSystem) CopyFile(srcName, destName string) {
+	srcFile := fs.findFile(srcName)
+	newFile := &File{Name: destName, BlockNums: []int{}, Size: srcFile.Size}
 	for _, blockNum := range srcFile.BlockNums {
 		newBlockNum := fs.AllocateBlock()
 		copy(fs.Blocks[newBlockNum][:], fs.Blocks[blockNum][:])
 		newFile.BlockNums = append(newFile.BlockNums, newBlockNum)
 	}
-	destDir.Children[destFileName] = newFile
+	fs.CurrDir.Children[destName] = newFile
 }
 
-func (fs *FileSystem) MoveFile(srcPath, destPath string) {
-	fs.CopyFile(srcPath, destPath)
-	fs.DeleteFile(srcPath)
+func (fs *FileSystem) MoveFile(srcName, destName string) {
+	fs.CopyFile(srcName, destName)
+	fs.DeleteFile(srcName)
 }
 
-func (fs *FileSystem) DeleteFile(path string) {
-	dirPath, fileName := splitPath(path)
-	dir := fs.findDirectory(dirPath)
-	file := dir.Children[fileName].(*File)
-
-	for _, blockNum := range file.BlockNums {
-		fs.UsedBlocks[blockNum] = false
+func (fs *FileSystem) findFile(name string) *File {
+	child := fs.CurrDir.Children[name]
+	if file, ok := child.(*File); ok {
+		return file
 	}
-	delete(dir.Children, fileName)
+	return nil
 }
 
-func (fs *FileSystem) Dump() {
-	fs.dumpDirectory(fs.Root, "")
-}
-
-func (fs *FileSystem) dumpDirectory(dir *Directory, indent string) {
-	fmt.Println(indent + dir.Name + "/")
-	for name, child := range dir.Children {
-		switch child := child.(type) {
-		case *File:
-			fmt.Printf("%s  %s\n", indent, name)
-		case *Directory:
-			fs.dumpDirectory(child, indent+"  ")
+func (fs *FileSystem) GetCurrentPath() string {
+	if fs.CurrDir == fs.Root {
+		return "/"
+	}
+	path := ""
+	curr := fs.CurrDir
+	for curr != nil {
+		if curr.Parent == nil {
+			break
 		}
+		path = "/" + curr.Name + path
+		curr = curr.Parent
 	}
+	return path
 }
 
 func main() {
 	fs := NewFileSystem()
-
-	fs.CreateFile("/", "file1.txt")
-	fs.WriteToFile("/file1.txt", []byte("Hello, File System!"))
-
-	fs.CreateFile("/", "file2.txt")
-	fs.WriteToFile("/file2.txt", []byte("Another file with some data."))
-
-	fs.CreateDirectory("/", "docs")
-	fs.CreateFile("/docs", "report.pdf")
-	fs.WriteToFile("/docs/report.pdf", []byte("This is a report document."))
-
-	fs.CreateDirectory("/", "images")
-	fs.CreateFile("/images", "photo1.jpg")
-	fs.WriteToFile("/images/photo1.jpg", []byte("Image data 1"))
-
-	fs.CreateDirectory("/images", "thumbnails")
-	fs.CreateFile("/images/thumbnails", "thumb1.jpg")
-	fs.WriteToFile("/images/thumbnails/thumb1.jpg", []byte("Thumbnail image data"))
-
-	fs.CopyFile("/file1.txt", "/docs/file1_copy.txt")
-	fs.MoveFile("/images/photo1.jpg", "/docs/photo1.jpg")
-
-	fmt.Println("File System Structure:")
-	fs.Dump()
-
-	fmt.Println("\nRead data from /docs/photo1.jpg:")
-	data := fs.ReadFromFile("/docs/photo1.jpg")
-	fmt.Println(string(data))
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Printf("%s: ", fs.GetCurrentPath())
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		args := strings.Split(input, " ")
+		command := args[0]
+		switch command {
+		case "ls":
+			fs.ListDirectory()
+		case "mkdir":
+			fs.CreateDirectory(args[1])
+		case "touch":
+			fs.CreateFile(args[1])
+		case "cd":
+			fs.ChangeDirectory(args[1])
+		case "pwd":
+			fmt.Println(fs.GetCurrentPath())
+		case "cat":
+			data := fs.ReadFromFile(args[1])
+			fmt.Println(string(data))
+		case "rm":
+			fs.DeleteFile(args[1])
+		case "cp":
+			fs.CopyFile(args[1], args[2])
+		case "mv":
+			fs.MoveFile(args[1], args[2])
+		case "exit":
+			return
+		}
+	}
 }
