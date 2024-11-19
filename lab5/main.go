@@ -138,9 +138,48 @@ func (fs *FileSystem) CopyFile(srcName, destName string) {
 	fs.CurrDir.Children[destName] = newFile
 }
 
-func (fs *FileSystem) MoveFile(srcName, destName string) {
-	fs.CopyFile(srcName, destName)
-	fs.DeleteFile(srcName)
+func (fs *FileSystem) MoveFile(srcName, destPath string) {
+	srcFile := fs.findFile(srcName)
+
+	destDirPath, destFileName := resolvePath(destPath)
+	destDir := fs.resolveDirectory(destDirPath)
+
+	destDir.Children[destFileName] = &File{
+		Name:      destFileName,
+		BlockNums: srcFile.BlockNums,
+		Size:      srcFile.Size,
+	}
+
+	delete(fs.CurrDir.Children, srcName)
+}
+
+func resolvePath(path string) (string, string) {
+	segments := strings.Split(path, "/")
+	if len(segments) > 1 {
+		return strings.Join(segments[:len(segments)-1], "/"), segments[len(segments)-1]
+	}
+	return ".", path
+}
+
+func (fs *FileSystem) resolveDirectory(path string) *Directory {
+	curr := fs.CurrDir
+	if path == "/" {
+		return fs.Root
+	}
+	segments := strings.Split(path, "/")
+	for _, seg := range segments {
+		if seg == "" || seg == "." {
+			continue
+		}
+		if seg == ".." {
+			curr = curr.Parent
+		} else if dir, ok := curr.Children[seg].(*Directory); ok {
+			curr = dir
+		} else {
+			return nil
+		}
+	}
+	return curr
 }
 
 func (fs *FileSystem) findFile(name string) *File {
