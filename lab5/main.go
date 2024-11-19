@@ -190,6 +190,9 @@ func main() {
 		case "cat":
 			data := fs.ReadFromFile(args[1])
 			fmt.Println(string(data))
+		case "echo":
+			content := strings.Join(args[2:], " ")
+			fs.WriteToFile(args[1], []byte(content))
 		case "rm":
 			fs.DeleteFile(args[1])
 		case "cp":
